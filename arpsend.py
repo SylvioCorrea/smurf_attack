@@ -29,7 +29,7 @@ def string2hexip(sip):
   
   
 if len(sys.argv) < 6:
-  print 'Uso: sudo python arpsend.py <source mac> <source ip> <dest mac> <dest ip> <arp opcode>'
+  print('Uso: sudo python arpsend.py <source mac> <source ip> <dest mac> <dest ip> <arp opcode>')
   exit()
 
 eth_prot = 0x0806

