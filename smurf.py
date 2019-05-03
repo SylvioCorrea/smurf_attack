@@ -1,6 +1,7 @@
 #Envia um pacote ICMP Echo Request para outra maquina
 
 #Exemplo de uso: sudo python3 smurf.py enp0s3 a4:1f:72:f5:90:b7 10.0.2.15
+#Exemplo de uso: sudo python3 smurf.py enp4s0 a4:1f:72:f5:90:a1 10.32.143.65
 
 import struct
 import socket
