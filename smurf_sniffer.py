@@ -1,6 +1,9 @@
 #Exercicio 1 feito sobre o modelo de autoria de Silver Moon
 #Adicionado codigo que le e interpreta o header ARP, funcao ip_from_string
 
+#Exemplo: sudo python3 smurf_sniffer.py enp4s0
+
+
 #Packet sniffer in python
 #For Linux - Sniffs all incoming and outgoing packets :)
 #Silver Moon (m00n.silv3r@gmail.com)
@@ -138,7 +141,7 @@ def main():
                         ping_c.n += 1 #Incrementa a quantidade de pings em sequencia do endereco
                         ping_c.t = t
                         if ping_c.n > 20: # Criterio de caracterizacao de ataque
-                            print('Ataque detectado!\nMAC do provavel atacante: ', eth_srcaddr)
+                            print('Ataque detectado!\nMAC do provavel atacante: ', eth_srcaddr.hex())
           
                 print('----------------------------------------')
       
