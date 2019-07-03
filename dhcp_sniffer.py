@@ -28,27 +28,39 @@ def get_arp_opcode(opc):
     else: return 'unlisted opcode ' + str(opc)
 
 def mac2bytes(mac):
-  bytes = ''
-  for c in mac.split(':'):
-    bytes = bytes + c.decode('hex')
-  return bytes
+  mac = mac.replace(':', '')
+  return bytes.fromhex(mac)
 
 def string2hexip(sip):
   ns = sip.split('.')
   ns2 = []
   for n in ns:
     ns2.append(int(n))
-  return struct.pack('!BBBB', ns2[0], ns2[1], ns2[2], ns2[3])
+  return pack('!BBBB', ns2[0], ns2[1], ns2[2], ns2[3])
+
+def checksum(msg):
+  s = 0       # Binary Sum
+  # loop taking 2 characters at a time
+  for i in range(0, len(msg), 2):
+    a = msg[i]
+    b = msg[i+1]
+    s = s + (a+(b << 8))
+  # One's Complement
+  s = s + (s >> 16)
+  s = ~s & 0xffff
+  return socket.ntohs(s)
 
 ip_offer = string2hexip('10.32.143.150')
 ip_a = string2hexip('10.32.143.66')
 mac_a = mac2bytes('a4:1f:72:f5:90:80')
 subnet_mask = string2hexip('255.255.255.0')
-zero_char = chr(0)
+broadcast_ip = string2hexip('255.255.255.255')
+zero_ip = string2hexip('0.0.0.0')
+zero_192 = bytes(192)
 
 ip_ver_send = 4
 ip_ihl_send = 5
-ip_ihl_ver = (ip_ver << 4) + ip_ihl_send
+ip_ihl_ver = (ip_ver_send << 4) + ip_ihl_send
 ip_tos_send = 0
 ip_tot_len_send = 0  # kernel will fill the correct total length
 ip_id_send = 54321   #Id of this packet
@@ -57,7 +69,6 @@ ip_ttl_send = 255
 ip_proto_send = socket.IPPROTO_ICMP
 ip_check_send = 0    # kernel will fill the correct checksum
 
-#TODO
 ip_check = 0
 
 
@@ -70,7 +81,13 @@ def main():
     except(socket.error , msg):
         print('Socket could not be created. Error Code : ' + str(msg[0]) + ' Message ' + msg[1])
         sys.exit()
-
+    
+    try:
+        s_sender = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
+        s_sender.bind(('enp4s0', 67))
+    except(socket.error , msg):
+        print('Sender socket could not be created. Error Code : ' + str(msg[0]) + ' Message ' + msg[1])
+        sys.exit()
 
     # receive a packet
     while True:
@@ -101,13 +118,13 @@ def main():
             iph_length = ihl * 4
             ttl = iph[5]
             protocol = iph[6]
-            s_addr = socket.inet_ntoa(iph[8]);
-            d_addr = socket.inet_ntoa(iph[9]);
+            s_addr = iph[8];
+            d_addr = iph[9];
 
             #print('Version : ' + str(version) + ' IP Header Length : ' + str(ihl) + ' TTL : ' + str(ttl) + ' Protocol : ' + str(protocol) + ' Source Address : ' + str(s_addr) + ' Destination Address : ' + str(d_addr))
 
             #UDP Packets
-            if protocol == 0x11 and s_addr == '0.0.0.0' and d_addr == '255.255.255.255':
+            if protocol == 0x11 and s_addr == zero_ip and d_addr == broadcast_ip:
                 
                 udp_length = 8;
                 udp_start = eth_length+20 #20 from ip packet
@@ -123,45 +140,94 @@ def main():
                     rem_packet = packet[next_start : next_start+next_size]
                     dhcp_xid = rem_packet[4:8]
                     dhcp_option = rem_packet[240:243]
-                    # Discover
+                    
+                    
+                    
+                    # Discover recebido
                     if dhcp_option[0] == 0x35 and dhcp_option[2] == 0x1:
-                        print(eth_srcaddr)
+                        print('Discover received. Sending Offer')
                         
                         #===========================
-                        eth_send = struct.pack("!6s6sH", eth_srcaddr, mac_a, eth_type)
-                        ip_send = struct.pack('!BBHHHBBH4s4s', version_ihl, 0, ????, , 0, 0, 255, protocol, ip_check, ip_a, d_addr)
-                        udp_send = struct.pack('!HHHH', dest_port, source_port, 308, 0)
-                        rem_packet_send = struct.pack('',
-                                                      0x02010600, # 4B
+                        total_ip_len = 302 #atualizar sempre que trocar o tamanho do pacote
+                        eth_send = pack("!6s6sH", eth_srcaddr, mac_a, eth_type)
+                        ip_send = pack('!BBHHHBBH4s4s',
+                                              version_ihl,
+                                              0, #TOS
+                                              total_ip_len, #total len
+                                              0, #identification
+                                              0, #flags
+                                              255, #ttl
+                                              protocol,
+                                              0, 
+                                              ip_a,
+                                              d_addr)
+                        ip_check = checksum(ip_send)
+                        #ip packet atualizado com checksum correto
+                        ip_send = pack('!BBHHHBBH4s4s',
+                                              version_ihl,
+                                              0, #TOS
+                                              total_ip_len, #total len
+                                              0, #identification
+                                              0, #flags
+                                              255, #ttl
+                                              protocol,
+                                              ip_check, 
+                                              ip_a,
+                                              d_addr)
+                        ip_header_size = len(ip_send)
+                        
+                        udp_send = pack('!HHHH', dest_port, source_port, 282, 0) # 308
+                        udp_header_size = len(udp_send)
+                        
+                        rem_packet_send = pack('!4s4sHH4s4s4s4s6sH4s4s192s4sBBBBB4sBB4sBB4sBB4sBB4sB',
+                                                      bytes.fromhex('02010600'), #4B
                                                       dhcp_xid, # 4B
                                                       0, #secs 2B
                                                       0, #flag 2B
-                                                      0, #ciaddr 4B
-                                                      0, #yiaddr 4B
-                                                      0, #siaddr 4B
-                                                      0, #giaddr 4B
-                                                      eth_srcaddr, #chaddr 4B
-                                                      0x0000, #2B
-                                                      0, #4B
-                                                      0, #4B
-                                                      zero_char*192 #192B
-                                                      0x63825363 #magic cookie 4B
+                                                      zero_ip, #ciaddr 4B
+                                                      ip_offer, #yiaddr 4B
+                                                      ip_a, #siaddr 4B
+                                                      ip_a, #giaddr 4B
+                                                      eth_srcaddr, #chaddr 6B
+                                                      0, #2B
+                                                      bytes.fromhex('00000000'), #4B
+                                                      bytes.fromhex('00000000'), #4B
+                                                      bytes(192), #192B
+                                                      bytes.fromhex('63825363'), #magic cookie 4B
                                                       53, #dhcp msg #1B
                                                       1, #length 1B
-                                                      2, #opt data 1B
+                                                      2, #msg offer data 1B
+                                                      
                                                       1, #opt mask 1B
                                                       4, #length 1B
                                                       subnet_mask, #4B
-                                                      , #TODO
+                                                      
+                                                      3, #default gw 1B
+                                                      4, #len 1B
+                                                      ip_a, # gw 4B
+                                                      
                                                       51, #lease ip time 1B
                                                       4, #len 1B
-                                                      120, #2 minutos 4B
+                                                      bytes.fromhex('00000078'), #2 minutos 4B
+                                                      
+                                                      54, #dhcp server #1B
+                                                      4, #len 1B
+                                                      ip_a, #dhcp server ip 4B
+                                                      
+                                                      6, #dns 1B
+                                                      4, #len 1B
+                                                      ip_a, #dns add 4B
+                                                      255
                                                       )
-                        ip_header = struct.pack('!BBHHHBBH4s4s' , ip_ihl_ver, ip_tos, ip_tot_len, ip_id, ip_frag_off, ip_ttl, ip_proto, ip_check, ip_saddr, ip_daddr)
-                        
-                        
-                        eth_header = struct.pack("!6s6sH", target_mac, source_mac, eth_prot)
-                        
+                                                      
+                        rem_size = len(rem_packet_send)
+                        print('ip len', ip_header_size)
+                        print('udp len', udp_header_size)
+                        print('rem len', rem_size)
+                        print('total udp len', udp_header_size + rem_size)
+                        print('total ip len', ip_header_size + udp_header_size + rem_size)
+                        mega_packet = eth_send + ip_send + udp_send + rem_packet_send
+                        s_sender.send(mega_packet)
                         
                         
                         
@@ -169,9 +235,94 @@ def main():
                         
                         #===========================
                         
-                    # Request
+                    # Request recebido
                     if dhcp_option[0] == 0x35 and dhcp_option[2] == 0x3:
                         print(dhcp_option)
+                        print('Request received. Sending ack.')
+                        
+                        print(eth_srcaddr)
+                        
+                        #===========================
+                        total_ip_len = 302 #atualizar sempre que trocar o tamanho do pacote
+                        eth_send = pack("!6s6sH", eth_srcaddr, mac_a, eth_type)
+                        ip_send = pack('!BBHHHBBH4s4s',
+                                              version_ihl,
+                                              0, #TOS
+                                              total_ip_len, #total len
+                                              0, #identification
+                                              0, #flags
+                                              255, #ttl
+                                              protocol,
+                                              0, 
+                                              ip_a,
+                                              d_addr)
+                        ip_check = checksum(ip_send)
+                        #ip packet atualizado com checksum correto
+                        ip_send = pack('!BBHHHBBH4s4s',
+                                              version_ihl,
+                                              0, #TOS
+                                              total_ip_len, #total len
+                                              0, #identification
+                                              0, #flags
+                                              255, #ttl
+                                              protocol,
+                                              ip_check, 
+                                              ip_a,
+                                              d_addr)
+                        ip_header_size = len(ip_send)
+                        
+                        udp_send = pack('!HHHH', dest_port, source_port, 282, 0) # 308
+                        udp_header_size = len(udp_send)
+                        
+                        rem_packet_send = pack('!4s4sHH4s4s4s4s6sH4s4s192s4sBBBBB4sBB4sBB4sBB4sBB4sB',
+                                                      bytes.fromhex('02010600'), #4B
+                                                      dhcp_xid, # 4B
+                                                      0, #secs 2B
+                                                      0, #flag 2B
+                                                      zero_ip, #ciaddr 4B
+                                                      ip_offer, #yiaddr 4B
+                                                      ip_a, #siaddr 4B
+                                                      ip_a, #giaddr 4B
+                                                      eth_srcaddr, #chaddr 6B
+                                                      0, #2B
+                                                      bytes.fromhex('00000000'), #4B
+                                                      bytes.fromhex('00000000'), #4B
+                                                      bytes(192), #192B
+                                                      bytes.fromhex('63825363'), #magic cookie 4B
+                                                      53, #dhcp msg #1B
+                                                      1, #length 1B
+                                                      5, #msg ack data 1B
+                                                      
+                                                      1, #opt mask 1B
+                                                      4, #length 1B
+                                                      subnet_mask, #4B
+                                                      
+                                                      3, #default gw 1B
+                                                      4, #len 1B
+                                                      ip_a, # gw 4B
+                                                      
+                                                      51, #lease ip time 1B
+                                                      4, #len 1B
+                                                      bytes.fromhex('00000078'), #2 minutos 4B
+                                                      
+                                                      54, #dhcp server #1B
+                                                      4, #len 1B
+                                                      ip_a, #dhcp server ip 4B
+                                                      
+                                                      6, #dns 1B
+                                                      4, #len 1B
+                                                      ip_a, #dns add 4B
+                                                      255
+                                                      )
+                                                      
+                        rem_size = len(rem_packet_send)
+                        #print('ip len', ip_header_size)
+                        #print('udp len', udp_header_size)
+                        #print('rem len', rem_size)
+                        #print('total udp len', udp_header_size + rem_size)
+                        #print('total ip len', ip_header_size + udp_header_size + rem_size)
+                        mega_packet = eth_send + ip_send + udp_send + rem_packet_send
+                        s_sender.send(mega_packet)
                         
                     # NAK
                     if dhcp_option[0] == 0x35 and dhcp_option[2] == 0x6:
